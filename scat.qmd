@@ -1,0 +1,134 @@
+---
+title: "Discriminación de especies Parte 1"
+format: html
+editor: visual
+theme: cosmo   # cosmo bootswatch theme
+---
+
+# Uso de machine learning para distinción de especies de mamíferos
+
+![](images/bobcat_vs_coyote-01.jpg){width="714"}
+
+Las heces producidas por estos tres animales son bastante similares, pero históricamente se han diferenciado en gran medida por su morfología.
+
+\-\--
+
+## Estudio original
+
+![](images/paste-31FF3DAA.png)
+
+![](images/paste-415A8F3B.png)
+
+## Carga de paquetes
+
+```{r}
+#echo: TRUE
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(GGally)
+library(skimr)
+
+#Paquete con datos de ejemplo
+library(modeldata)
+
+
+
+```
+
+## Preferencia de paquetes
+
+```{r}
+tidymodels_prefer(quiet = TRUE)
+```
+
+## Datos: Paquete modeldata
+
+```{r}
+scat %>% glimpse()
+
+```
+
+## Ajuste de variables
+
+```{r}
+scat %>% tabyl(Species)
+
+
+scat %>% tabyl(Month)
+
+
+scat %>% tabyl(Year)
+
+
+scat %>% tabyl(Location)
+```
+
+```{r}
+scat <- scat %>% mutate(Year = factor(Year))
+
+
+scat <- scat %>% mutate(across(ropey:scrape,~factor(.,
+                  labels = c("No", "Yes"))))
+
+```
+
+## Análisis Exploratorio de los datos
+
+```{r}
+skim(scat)
+```
+
+```{r}
+scat %>% group_by(Species) %>% 
+          summarise(media_diametro = mean(Diameter, na.rm = T))
+
+
+scat %>% group_by(Species) %>% 
+          summarise(media_diametro = median(Diameter, na.rm = T))
+```
+
+## Exploración de los datos
+
+```{r}
+ggpairs(scat[c(1,8:19)], aes(color = Species))
+```
+
+# División de los datos
+
+```{r}
+set.seed(777)
+scat_split <- initial_split(scat,prop=0.75, strata = Species)
+
+scat_train <- scat_split %>% training()
+
+scat_test <- scat_split %>% testing()
+```
+
+## Datos de validación
+
+```{r}
+scat_valid <- bootstraps(scat_train, strata = Species)
+```
+
+## Preprocesamiento de los datos
+
+```{r}
+recipe1 <- recipe(Species~., data = scat_train) %>%
+           step_impute_mean(all_numeric_predictors()) %>%
+           step_dummy(all_nominal_predictors()) %>% 
+           step_normalize(all_predictors()) %>% 
+           prep()
+
+
+recipe2 <- recipe(Species~., data = scat_train) %>%
+           step_impute_bag(all_numeric_predictors()) %>%
+           step_dummy(all_nominal_predictors()) %>% 
+           step_normalize(all_predictors()) %>% 
+           prep()
+
+```
+
+```{r}
+recipe1 %>% juice() %>% skim()
+```
