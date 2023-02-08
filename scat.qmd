@@ -1,3 +1,5 @@
+st
+
 ---
 title: "Discriminación de especies Parte 1"
 format: html
@@ -91,7 +93,7 @@ scat %>% group_by(Species) %>%
 ## Exploración de los datos
 
 ```{r}
-ggpairs(scat[c(1,8:19)], aes(color = Species))
+ggpairs(scat[c(1,12:19)], aes(color = Species))
 ```
 
 # División de los datos
@@ -108,6 +110,7 @@ scat_test <- scat_split %>% testing()
 ## Datos de validación
 
 ```{r}
+set.seed(777)
 scat_valid <- bootstraps(scat_train, strata = Species)
 ```
 
@@ -127,8 +130,132 @@ recipe2 <- recipe(Species~., data = scat_train) %>%
            step_normalize(all_predictors()) %>% 
            prep()
 
+
+
+```
+
+## Especificación de los modelos
+
+```{r}
+knn_spec <- nearest_neighbor(neighbors = tune(),
+                             weight_func = tune(),
+                             dist_power = tune()) %>% 
+        set_engine("kknn") %>% 
+        set_mode("classification")
+
+tree_spec <- decision_tree(cost_complexity = tune(),
+  tree_depth = tune(),
+  min_n = tune()) %>%
+               set_engine("rpart") %>% 
+        set_mode("classification")
+
+
+rf_spec <- rand_forest(mtry = tune(),
+                      trees = tune(),
+                   min_n = tune()) %>% 
+          set_engine("ranger") %>% 
+        set_mode("classification")
+
+
+```
+
+## Set de recipes y modelos
+
+```{r}
+recipe_set <- list(recipe_1 = recipe1, recipe_2 = recipe2)
+
+model_set <- list(modelo1 = knn_spec, modelo2 = tree_spec,
+                  modelo3 = rf_spec)
+```
+
+## Flujo de trabajo
+
+```{r}
+scat_model_set <- workflow_set(
+  preproc = recipe_set,
+  models = model_set,
+  cross = TRUE
+)
+```
+
+## Ejecución de los modelos
+
+```{r}
+library(tictoc)
+clus <- parallel::makeCluster(8)
+doParallel::registerDoParallel(clus)
+tic()
+set.seed(777)
+wf_modelos <- scat_model_set %>% 
+               workflow_map(
+                 resamples = scat_valid,
+                 verbose = TRUE,
+                 metrics = metric_set(roc_auc),
+                 fn= "tune_grid",
+                 grid = 30
+               )
+parallel::stopCluster(clus)
+toc()
+
+```
+
+## Evaluación del modelo
+
+```{r}
+wf_modelos %>% autoplot()
 ```
 
 ```{r}
-recipe1 %>% juice() %>% skim()
+wf_modelos %>% rank_results(select_best = T, rank_metric = "roc_auc")
+
+```
+
+### Selección del mejor modelo
+
+```{r}
+best_result <- wf_modelos %>% 
+  extract_workflow_set_result("recipe_2_modelo3") %>% 
+  select_best(metric= "roc_auc")
+```
+
+### Ajuste del mejor modelo
+
+```{r}
+rf_fit <- wf_modelos %>% 
+  extract_workflow("recipe_2_modelo3") %>% 
+  finalize_workflow(best_result) %>% 
+  fit(scat_train)
+
+```
+
+## Predicción con nuevos datos
+
+```{r}
+#Matriz de confusion
+rf_fit %>% predict(new_data = scat_test, type = "class") %>% 
+  bind_cols(scat_test) %>% select(Species, .pred_class) %>% 
+  conf_mat(truth = Species, estimate = .pred_class) 
+
+
+#Matriz de confusion de manera gráfica
+rf_fit %>% predict(new_data = scat_test, type = "class") %>% 
+  bind_cols(scat_test) %>% select(Species, .pred_class) %>% 
+  conf_mat(truth = Species, estimate = .pred_class) %>% autoplot()
+```
+
+## Curva ROC
+
+```{r}
+rf_fit %>% predict(new_data = scat_test, type = "prob") %>% 
+  bind_cols(scat_test) %>% select(Species,.pred_bobcat, .pred_coyote, .pred_gray_fox) %>% roc_curve(truth = Species,
+                                            .pred_bobcat:.pred_gray_fox) %>% autoplot()
+ 
+```
+
+## AU-ROC
+
+```{r}
+rf_fit %>% predict(new_data = scat_test, type = "prob") %>% 
+  bind_cols(scat_test) %>% select(Species,.pred_bobcat, .pred_coyote, .pred_gray_fox) %>% roc_auc(truth = Species,
+                                            .pred_bobcat:.pred_gray_fox) 
 ```
